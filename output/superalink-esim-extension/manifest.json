@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Superalink eSIM Helper",
+  "version": "0.1.0",
+  "description": "Create Superalink checkout orders and store eSIM history in Chrome local storage.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "cookies",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://storefront.api.superalink.com/*",
+    "https://www.superalink.com/*",
+    "https://api.tempmail.lol/*",
+    "https://www.1secmail.com/*",
+    "https://activate.superalink.com/*",
+    "https://*.cloudfront.net/*"
+  ],
+  "action": {
+    "default_title": "Superalink eSIM Helper",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' https: data:;"
+  }
+}

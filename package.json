@@ -1,0 +1,21 @@
+{
+  "name": "esim-auto",
+  "version": "0.1.0",
+  "description": "Superalink eSIM registration and purchase helper",
+  "type": "module",
+  "scripts": {
+    "register:superalink": "tsx src/cli/register-superalink.ts",
+    "purchase:superalink": "tsx src/cli/purchase-superalink.ts",
+    "checkout:superalink": "tsx src/cli/checkout-superalink.ts",
+    "check": "tsc --noEmit",
+    "install-browser": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.6",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

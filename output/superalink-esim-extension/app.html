@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Superalink eSIM Helper</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="top-brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <span>Superalink Checkout</span>
+      </div>
+      <div id="topStatus" class="top-status">FRONT0000 · THB · Chrome Storage</div>
+    </header>
+
+    <aside class="sidebar">
+      <div class="nav-title">本地工具</div>
+      <button class="nav active" type="button" data-view="purchase">购买 eSIM</button>
+      <button class="nav" type="button" data-view="history">历史 eSIM</button>
+      <button class="nav" type="button" data-view="mail">邮箱查询</button>
+      <button class="nav" type="button" data-view="settings">数据</button>
+    </aside>
+
+    <section class="content">
+      <section id="purchaseView" class="view active">
+        <div class="view-head">
+          <div>
+            <h1>购买 eSIM</h1>
+            <p>插件会创建临时邮箱和 Superalink checkout，订单保存到 Chrome 本地存储。</p>
+          </div>
+        </div>
+
+        <div class="purchase-grid">
+          <section class="panel">
+            <div class="form-grid">
+              <label>目的地<select id="country"></select></label>
+              <label>币种<select id="currency">
+                <option value="THB">THB · 泰铢</option>
+                <option value="USD">USD · 美元</option>
+                <option value="SGD">SGD · 新币</option>
+                <option value="GBP">GBP · 英镑</option>
+                <option value="EUR">EUR · 欧元</option>
+                <option value="JPY">JPY · 日元</option>
+                <option value="KRW">KRW · 韩元</option>
+                <option value="CNY">CNY · 人民币</option>
+              </select></label>
+              <label>数量<input id="quantity" type="number" min="1" max="20" step="1"></label>
+              <label>邮箱<select id="mailProvider">
+                <option value="tempmail-lol">tempmail.lol</option>
+                <option value="1secmail">1secmail</option>
+              </select></label>
+            </div>
+            <div id="plans" class="plans">
+              <div class="plan-skeleton" aria-hidden="true">
+                <div class="skeleton-stack">
+                  <div class="skeleton-line title"></div>
+                  <div class="skeleton-line meta"></div>
+                </div>
+                <div class="skeleton-stack">
+                  <div class="skeleton-line price"></div>
+                  <div class="skeleton-line price-sub"></div>
+                </div>
+              </div>
+              <div class="plan-skeleton" aria-hidden="true">
+                <div class="skeleton-stack">
+                  <div class="skeleton-line title"></div>
+                  <div class="skeleton-line meta"></div>
+                </div>
+                <div class="skeleton-stack">
+                  <div class="skeleton-line price"></div>
+                  <div class="skeleton-line price-sub"></div>
+                </div>
+              </div>
+              <div class="plan-skeleton" aria-hidden="true">
+                <div class="skeleton-stack">
+                  <div class="skeleton-line title"></div>
+                  <div class="skeleton-line meta"></div>
+                </div>
+                <div class="skeleton-stack">
+                  <div class="skeleton-line price"></div>
+                  <div class="skeleton-line price-sub"></div>
+                </div>
+              </div>
+              <div class="plan-skeleton" aria-hidden="true">
+                <div class="skeleton-stack">
+                  <div class="skeleton-line title"></div>
+                  <div class="skeleton-line meta"></div>
+                </div>
+                <div class="skeleton-stack">
+                  <div class="skeleton-line price"></div>
+                  <div class="skeleton-line price-sub"></div>
+                </div>
+              </div>
+              <div class="plan-skeleton" aria-hidden="true">
+                <div class="skeleton-stack">
+                  <div class="skeleton-line title"></div>
+                  <div class="skeleton-line meta"></div>
+                </div>
+                <div class="skeleton-stack">
+                  <div class="skeleton-line price"></div>
+                  <div class="skeleton-line price-sub"></div>
+                </div>
+              </div>
+            </div>
+            <div id="planControl" class="plan-control" hidden>
+              <span id="planCountText" class="muted"></span>
+              <button id="planToggleBtn" class="ghost" type="button">查看更多</button>
+            </div>
+          </section>
+
+          <aside class="panel summary">
+            <div class="muted">当前订单</div>
+            <h2 id="summaryTitle">
+              <span class="country-heading">
+                <span class="country-flag">🇨🇳</span>
+                <span class="country-copy"><strong>中国大陆</strong><small>China Mainland · CN</small></span>
+              </span>
+            </h2>
+            <div class="amount" id="summaryAmount">--</div>
+            <div class="kv"><span>套餐</span><b id="summaryPlan">--</b></div>
+            <div class="kv"><span>SKU</span><span id="summarySku">--</span></div>
+            <div class="kv"><span>数量</span><span id="summaryQty">1</span></div>
+            <button id="createOrderBtn" class="primary" type="button">创建订单</button>
+            <div id="purchaseStatus" class="status">请选择套餐。</div>
+            <div id="currentOrderPanel" class="email-box" hidden>
+              <div class="kv"><span>目的地</span><span id="currentOrderCountry">--</span></div>
+              <div class="kv"><span>邮箱</span><b id="currentOrderEmail">--</b></div>
+              <div class="kv"><span>订单</span><span id="currentOrderId">--</span></div>
+              <div class="button-row">
+                <button id="openPaymentBtn" class="primary" type="button">打开付款页</button>
+                <button id="copyCurrentEmailBtn" class="ghost" type="button">复制邮箱</button>
+              </div>
+              <button id="goMailBtn" class="ghost" type="button">去邮箱查询</button>
+            </div>
+            <div class="payment-note">付款会在 Superalink checkout 页面完成，插件负责保存订单并收集邮件。</div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="historyView" class="view">
+        <div class="view-head">
+          <div>
+            <h1>历史 eSIM</h1>
+            <p>订单与 eSIM 数据保存在当前 Chrome 用户配置里。</p>
+          </div>
+          <button id="refreshHistoryBtn" class="ghost" type="button">刷新</button>
+        </div>
+        <div class="history-grid">
+          <section class="panel">
+            <div id="historyStatus" class="status">读取历史中。</div>
+            <div id="historyList" class="history-list"></div>
+          </section>
+          <section id="detailPanel" class="panel detail">
+            <div class="empty">选择一条订单。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="mailView" class="view">
+        <div class="view-head">
+          <div>
+            <h1>邮箱查询</h1>
+            <p>选择历史订单后读取临时邮箱，支付后可收集 eSIM 邮件。</p>
+          </div>
+        </div>
+        <section class="panel mail-panel">
+          <label>历史订单<select id="mailOrderSelect"></select></label>
+          <div class="button-row">
+            <button id="collectMailBtn" class="primary" type="button">收集 eSIM 邮件</button>
+            <button id="listMailBtn" class="ghost" type="button">查看最新邮件</button>
+          </div>
+          <label>手动粘贴邮件 HTML 或正文<textarea id="manualMailText" rows="7" placeholder="如果自动读取失败，可以从邮箱里复制 eSIM 邮件内容粘贴到这里"></textarea></label>
+          <button id="parseManualMailBtn" class="ghost" type="button">解析并保存</button>
+          <div id="mailStatus" class="status">等待操作。</div>
+          <div id="mailResults" class="mail-results"></div>
+        </section>
+      </section>
+
+      <section id="settingsView" class="view">
+        <div class="view-head">
+          <div>
+            <h1>数据</h1>
+            <p>chrome.storage.local 无法直接指定文件夹，可用导出功能生成备份文件。</p>
+          </div>
+        </div>
+        <section class="panel">
+          <div class="button-row">
+            <button id="exportBtn" class="primary" type="button">导出订单 JSON</button>
+            <label class="file-btn">导入订单 JSON<input id="importFile" type="file" accept="application/json"></label>
+          </div>
+          <div id="storageStatus" class="status"></div>
+        </section>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

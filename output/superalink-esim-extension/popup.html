@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Superalink eSIM</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main class="popup">
+    <header class="head">
+      <div>
+        <h1>Superalink eSIM</h1>
+        <p id="countText">读取本地记录中</p>
+      </div>
+      <button id="openAppBtn" class="primary" type="button">打开工具</button>
+    </header>
+
+    <section id="latestPanel" class="card">
+      <div class="muted">最近 eSIM</div>
+      <div id="latestTitle" class="title">暂无记录</div>
+      <div id="latestMeta" class="meta"></div>
+      <div class="actions">
+        <button id="copyLpaBtn" class="ghost" type="button" disabled>复制 LPA</button>
+        <button id="openCheckoutBtn" class="ghost" type="button" disabled>Checkout</button>
+      </div>
+    </section>
+
+    <div id="statusText" class="status">订单数据保存在 chrome.storage.local。</div>
+  </main>
+</body>
+</html>

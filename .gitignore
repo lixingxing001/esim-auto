@@ -1,0 +1,9 @@
+node_modules/
+dist/
+output/*
+!output/superalink-esim-extension/
+!output/superalink-esim-extension/**
+!output/superalink-esim-extension.zip
+.env
+.env.local
+*.log
