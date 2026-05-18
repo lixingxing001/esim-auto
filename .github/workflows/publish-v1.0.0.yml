@@ -1,0 +1,137 @@
+name: Publish v1.0.0 Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-v1.0.0.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: v1.0.0
+      RELEASE_NAME: v1.0.0
+      ASSET_PATH: output/superalink-esim-extension.zip
+      ASSET_NAME: superalink-esim-extension-v1.0.0.zip
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: v1.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension zip
+        run: npm run extension:pack
+
+      - name: Create release and upload asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+
+          const {
+            GITHUB_TOKEN,
+            GITHUB_REPOSITORY,
+            TAG_NAME,
+            RELEASE_NAME,
+            ASSET_PATH,
+            ASSET_NAME
+          } = process.env;
+
+          if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN is missing');
+          if (!GITHUB_REPOSITORY) throw new Error('GITHUB_REPOSITORY is missing');
+
+          const apiBase = `https://api.github.com/repos/${GITHUB_REPOSITORY}`;
+          const apiHeaders = {
+            Authorization: `Bearer ${GITHUB_TOKEN}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+          };
+
+          async function readJson(response) {
+            const text = await response.text();
+            return text ? JSON.parse(text) : undefined;
+          }
+
+          async function requestJson(url, options = {}) {
+            const response = await fetch(url, options);
+            const data = await readJson(response);
+            if (!response.ok) {
+              throw new Error(`${options.method || 'GET'} ${url} failed: ${response.status} ${JSON.stringify(data)}`);
+            }
+            return data;
+          }
+
+          let release;
+          const existingResponse = await fetch(`${apiBase}/releases/tags/${encodeURIComponent(TAG_NAME)}`, {
+            headers: apiHeaders
+          });
+
+          if (existingResponse.status === 404) {
+            release = await requestJson(`${apiBase}/releases`, {
+              method: 'POST',
+              headers: { ...apiHeaders, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tag_name: TAG_NAME,
+                name: RELEASE_NAME,
+                body: [
+                  'Superalink eSIM Helper Chrome extension v1.0.0.',
+                  '',
+                  `Asset: ${ASSET_NAME}`
+                ].join('\n'),
+                draft: false,
+                prerelease: false
+              })
+            });
+          } else if (existingResponse.ok) {
+            release = await readJson(existingResponse);
+          } else {
+            const data = await readJson(existingResponse);
+            throw new Error(`GET release failed: ${existingResponse.status} ${JSON.stringify(data)}`);
+          }
+
+          const assets = await requestJson(`${apiBase}/releases/${release.id}/assets`, {
+            headers: apiHeaders
+          });
+
+          for (const asset of assets) {
+            if (asset.name === ASSET_NAME) {
+              await requestJson(`${apiBase}/releases/assets/${asset.id}`, {
+                method: 'DELETE',
+                headers: apiHeaders
+              });
+            }
+          }
+
+          const zip = await readFile(ASSET_PATH);
+          const uploadUrl = release.upload_url.replace(
+            '{?name,label}',
+            `?name=${encodeURIComponent(ASSET_NAME)}`
+          );
+          await requestJson(uploadUrl, {
+            method: 'POST',
+            headers: {
+              ...apiHeaders,
+              'Content-Type': 'application/zip',
+              'Content-Length': String(zip.byteLength)
+            },
+            body: zip
+          });
+
+          console.log(`Published ${release.html_url}`);
+          NODE
