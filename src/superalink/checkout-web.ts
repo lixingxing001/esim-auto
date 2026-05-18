@@ -546,6 +546,14 @@ async function handleRequest(
     return
   }
 
+  if (request.method === 'POST' && requestUrl.pathname === '/api/alipay/start-collection') {
+    const body = await readJsonBody<{ token?: string }>(request)
+    const session = getSession(body.token ?? '')
+    await startAlipayMailCollection(session, options, log)
+    sendJson(response, { ok: true, session: publicSession(session) })
+    return
+  }
+
   sendJson(response, { ok: false, error: 'not found' }, 404)
 }
 
@@ -896,6 +904,26 @@ async function capturePaypalOrder(
   session.captureResult = capture.intent
   session.updatedAt = new Date().toISOString()
   await persistSession(session, options, log)
+  startMailCollection(session, options, log)
+}
+
+async function startAlipayMailCollection(
+  session: CheckoutSession,
+  options: CheckoutWebServerOptions,
+  log: Logger
+): Promise<void> {
+  const alipay = session.paymentMethods.alipay
+  if (!alipay.available || !alipay.redirectUrl) {
+    throw new Error(`当前订单未检测到 Alipay 可用: ${alipay.reason ?? 'missing redirect url'}`)
+  }
+
+  // Alipay 跳转支付在官方页面完成，本地无法 capture，只能在用户打开支付页后开始轮询 eSIM 邮件。
+  session.status = 'payment_submitted'
+  session.statusText = 'Alipay 支付页已打开，正在等待 Superalink eSIM 邮件'
+  session.paymentMethod = 'alipay'
+  session.updatedAt = new Date().toISOString()
+  await persistSession(session, options, log)
+  log.info(`[Alipay] 已打开支付页并开始收集邮件 order=${session.orderId} currency=${session.currency}`)
   startMailCollection(session, options, log)
 }
 

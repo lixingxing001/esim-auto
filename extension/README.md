@@ -5,7 +5,17 @@
 1. 打开 Chrome 扩展程序页面。
 2. 开启开发者模式。
 3. 点击“加载已解压的扩展程序”。
-4. 选择本目录：`output/superalink-esim-extension`。
+4. 开发时选择项目根目录下的 `extension/`。
+5. 分发时使用 `output/superalink-esim-extension.zip`。
+
+## 开发
+
+插件源码以 `extension/` 为准，`output/` 只保存打包产物。
+
+```bash
+rtk npm run extension:check
+rtk npm run extension:pack
+```
 
 ## 数据保存位置
 
@@ -23,12 +33,13 @@ superalinkOrders
 
 1. 点击扩展图标。
 2. 点击“打开工具”。
-3. 在“购买 eSIM”里选择目的地、币种、数量和邮箱供应商。
+3. 在“购买 eSIM”里选择目的地、币种、数量和邮箱供应商；数量代表要创建多少个独立邮箱和独立 checkout。
 4. 点击“创建订单”。
-5. 插件会显示订单号、邮箱和“打开付款页”按钮。
-6. 手动点击“打开付款页”，在 Superalink checkout 页面完成付款。
-7. 回到插件“邮箱查询”，选择订单，点击“收集 eSIM 邮件”。
-8. 在“历史 eSIM”里复制 LPA 或打开二维码。
+5. 插件会按数量创建订单，显示邮箱、订单号和“打开付款页”按钮。
+6. 手动点击“打开付款页”，在 Superalink checkout 页面完成当前订单付款。
+7. 回到插件点击“已完成付款，开始收集”，插件会轮询该订单邮箱并保存 eSIM 信息。
+8. 如果本批次还有未付款订单，继续点击“打开下一付款页”并重复确认收集。
+9. 在“历史 eSIM”里复制 LPA 或打开二维码。
 
 ## 注意
 

@@ -7,6 +7,8 @@
     "register:superalink": "tsx src/cli/register-superalink.ts",
     "purchase:superalink": "tsx src/cli/purchase-superalink.ts",
     "checkout:superalink": "tsx src/cli/checkout-superalink.ts",
+    "extension:check": "node --check extension/app.js && node --check extension/popup.js && node --check extension/background.js",
+    "extension:pack": "npm run extension:check && node scripts/pack-extension.mjs",
     "check": "tsc --noEmit",
     "install-browser": "npx playwright install chromium"
   },

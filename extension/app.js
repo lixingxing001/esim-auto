@@ -1,15 +1,27 @@
 const STORE_API_BASE = 'https://storefront.api.superalink.com';
 const SUPERALINK_BASE_URL = 'https://www.superalink.com';
 const DEFAULT_LOCALE = 'en';
+const DEFAULT_AFFILIATE_CODE = 'FRONT0000';
 const DEFAULT_COUPON = 'FRONT0000';
 const DEFAULT_COUNTRY_CODE = 'CN';
 const DEFAULT_CURRENCY = 'THB';
 const DEFAULT_SKU = 'CN-5GB_UNLIMITED-5GB-5-DAYS';
 const PLAN_COLLAPSED_LIMIT = 5;
+const RECOMMEND_TIE_CNY = 0.01;
+const AUTO_MAIL_WAIT_MS = 10 * 60 * 1000;
+const AUTO_MAIL_INTERVAL_MS = 5000;
 const STORAGE_KEYS = {
   orders: 'superalinkOrders',
   settings: 'superalinkSettings'
 };
+
+const HISTORY_FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'pending_payment', label: '待付款' },
+  { value: 'mail', label: '待收集' },
+  { value: 'received', label: '已收集' },
+  { value: 'issue', label: '异常' }
+];
 
 const COUNTRIES = [
   { code: 'CN', name: 'China Mainland', zhName: '中国大陆', flag: '🇨🇳' },
@@ -81,16 +93,24 @@ const VISIBLE_DAYS_BY_COUNTRY = {
   SA: [5, 6, 7, 10, 12, 15, 20, 30]
 };
 
-const DISCOUNT_CAPS = {
-  THB: { amount: 175, symbol: '฿', decimals: 2 },
-  USD: { amount: 5, symbol: '$', decimals: 2 },
-  EUR: { amount: 4, symbol: '€', decimals: 2 },
-  GBP: { amount: 4, symbol: '£', decimals: 2 },
-  SGD: { amount: 6.75, symbol: 'S$', decimals: 2 },
-  CNY: { amount: 36.25, symbol: '¥', decimals: 2 },
-  JPY: { amount: 775, symbol: '¥', decimals: 0 },
-  KRW: { amount: 6750, symbol: '₩', decimals: 0 },
-  IDR: { amount: 80000, symbol: 'Rp', decimals: 0 }
+const FRONT_TIER_USD_DISCOUNTS = [
+  { minDays: 30, amount: 12 },
+  { minDays: 20, amount: 9 },
+  { minDays: 15, amount: 7 },
+  { minDays: 7, amount: 5 },
+  { minDays: 5, amount: 2 }
+];
+
+const FRONT_TIER_USD_TO_CURRENCY_RATE = {
+  THB: 35,
+  USD: 1,
+  EUR: 0.8,
+  GBP: 0.8,
+  SGD: 1.35,
+  CNY: 7.25,
+  JPY: 155,
+  KRW: 1350,
+  IDR: 16000
 };
 
 const CURRENCY_SYMBOLS = {
@@ -112,11 +132,18 @@ const state = {
   activeView: 'purchase',
   rawProducts: [],
   catalog: [],
+  coupon: undefined,
+  couponError: '',
   selectedSku: '',
   plansExpanded: false,
   orders: [],
   activeOrderId: '',
-  currentOrderId: ''
+  currentOrderId: '',
+  currentOrderIds: [],
+  paymentButtonMode: 'open',
+  historyFilter: 'all',
+  pendingVoidOrderId: '',
+  selectWidgets: new Map()
 };
 
 const el = {
@@ -135,6 +162,7 @@ const el = {
   planControl: document.getElementById('planControl'),
   planCountText: document.getElementById('planCountText'),
   planToggleBtn: document.getElementById('planToggleBtn'),
+  recommendPlanBtn: document.getElementById('recommendPlanBtn'),
   summaryTitle: document.getElementById('summaryTitle'),
   summaryAmount: document.getElementById('summaryAmount'),
   summaryPlan: document.getElementById('summaryPlan'),
@@ -143,13 +171,16 @@ const el = {
   createOrderBtn: document.getElementById('createOrderBtn'),
   currentOrderPanel: document.getElementById('currentOrderPanel'),
   currentOrderCountry: document.getElementById('currentOrderCountry'),
+  currentOrderCount: document.getElementById('currentOrderCount'),
   currentOrderEmail: document.getElementById('currentOrderEmail'),
   currentOrderId: document.getElementById('currentOrderId'),
+  currentOrderList: document.getElementById('currentOrderList'),
   openPaymentBtn: document.getElementById('openPaymentBtn'),
   copyCurrentEmailBtn: document.getElementById('copyCurrentEmailBtn'),
   goMailBtn: document.getElementById('goMailBtn'),
   purchaseStatus: document.getElementById('purchaseStatus'),
   topStatus: document.getElementById('topStatus'),
+  historyFilters: document.getElementById('historyFilters'),
   historyStatus: document.getElementById('historyStatus'),
   historyList: document.getElementById('historyList'),
   detailPanel: document.getElementById('detailPanel'),
@@ -223,6 +254,44 @@ function upsertOrder(order) {
   else state.orders.unshift(order);
 }
 
+function isVoidedOrder(order) {
+  return Boolean(order?.voidedAt);
+}
+
+function visibleOrders() {
+  return state.orders.filter(order => !isVoidedOrder(order));
+}
+
+function findVisibleOrder(orderId) {
+  return visibleOrders().find(order => order.id === orderId);
+}
+
+function ensureActiveVisibleOrder(orders = visibleOrders()) {
+  const activeOrder = orders.find(order => order.id === state.activeOrderId);
+  if (activeOrder) return activeOrder;
+  const nextOrder = orders[0];
+  state.activeOrderId = nextOrder?.id || '';
+  return nextOrder;
+}
+
+function historyFilterGroup(order) {
+  const status = order?.status || '';
+  if (status === 'esim_received') return 'received';
+  if (status === 'created' || status === 'payment_opened') return 'pending_payment';
+  if (status === 'collecting_mail' || status === 'mail_pending') return 'mail';
+  if (status === 'mail_timeout' || status === 'failed' || status === 'error') return 'issue';
+  return 'mail';
+}
+
+function historyFilterLabel(value) {
+  return HISTORY_FILTERS.find(filter => filter.value === value)?.label || '全部';
+}
+
+function filteredHistoryOrders(orders = visibleOrders()) {
+  if (state.historyFilter === 'all') return orders;
+  return orders.filter(order => historyFilterGroup(order) === state.historyFilter);
+}
+
 async function apiJson(url, options = {}, description = '请求') {
   const response = await fetch(url, options);
   const text = await response.text();
@@ -232,6 +301,39 @@ async function apiJson(url, options = {}, description = '请求') {
   } catch {
     throw new Error(`${description}返回不是 JSON`);
   }
+}
+
+async function loadCoupon() {
+  state.couponError = '';
+  try {
+    const coupon = await apiJson(`${STORE_API_BASE}/v2/coupons/${encodeURIComponent(DEFAULT_COUPON)}`, {
+      headers: { Accept: 'application/json', 'Accept-Language': DEFAULT_LOCALE }
+    }, '读取优惠');
+    state.coupon = normalizeCoupon(coupon);
+    console.debug('[superalink-extension] coupon loaded', {
+      code: state.coupon.code,
+      type: state.coupon.type,
+      cutStrategy: state.coupon.cutStrategy
+    });
+  } catch (error) {
+    state.coupon = undefined;
+    state.couponError = error.message || String(error);
+    console.debug('[superalink-extension] coupon loading failed', error);
+  }
+}
+
+function normalizeCoupon(coupon) {
+  return {
+    code: coupon?.code || DEFAULT_COUPON,
+    type: coupon?.type || '',
+    cutStrategy: coupon?.cutStrategy || '',
+    cutPercentage: Number(coupon?.cutPercentage || 0),
+    cutAmount: coupon?.cutAmount || {},
+    countries: Array.isArray(coupon?.countries) ? coupon.countries : [],
+    startDate: coupon?.startDate || '',
+    endDate: coupon?.endDate || '',
+    description: coupon?.couponDescription?.EN || coupon?.couponDescription?.CN || coupon?.couponDescription?.ZH || ''
+  };
 }
 
 function storefrontHeaders(pageUrl) {
@@ -296,9 +398,10 @@ async function loadCatalog() {
   state.plansExpanded = false;
   renderPlanSkeletons();
   el.planControl.hidden = true;
-  setStatus(el.purchaseStatus, '读取官方套餐中。');
+  setStatus(el.purchaseStatus, '读取官方套餐和优惠中。');
   console.debug('[superalink-extension] catalog loading skeleton rendered', { countryCode });
   try {
+    await loadCoupon();
     const groups = await apiJson(`${STORE_API_BASE}/products?country_code=${encodeURIComponent(countryCode)}`, {
       headers: { Accept: 'application/json', 'Accept-Language': DEFAULT_LOCALE }
     }, '读取套餐');
@@ -310,7 +413,13 @@ async function loadCatalog() {
     const preferred = state.catalog.find(item => item.sku === DEFAULT_SKU) || state.catalog[0];
     state.selectedSku = preferred?.sku || '';
     renderPlans();
-    setStatus(el.purchaseStatus, state.catalog.length ? '套餐已更新。' : '当前目的地没有可用套餐。', state.catalog.length ? 'ok' : 'warn');
+    if (!state.catalog.length) {
+      setStatus(el.purchaseStatus, '当前目的地没有可用套餐。', 'warn');
+    } else if (state.couponError) {
+      setStatus(el.purchaseStatus, `套餐已更新，但优惠读取失败，列表显示官方原价：${state.couponError}`, 'warn');
+    } else {
+      setStatus(el.purchaseStatus, `套餐已更新，已读取 ${state.coupon?.code || DEFAULT_COUPON} 官方优惠。`, 'ok');
+    }
   } catch (error) {
     state.rawProducts = [];
     state.catalog = [];
@@ -355,8 +464,7 @@ function toCatalogProduct(product, countryCode) {
     durationDays: duration,
     dataText,
     dailyDataText: dataText,
-    prices: product.price || {},
-    discountedPrices: discountedPrices(product)
+    prices: product.price || {}
   };
 }
 
@@ -373,32 +481,19 @@ function durationDays(product) {
   return undefined;
 }
 
-function discountedPrices(product) {
-  const result = {};
-  for (const [currency, price] of Object.entries(product.price || {})) {
-    const cap = DISCOUNT_CAPS[currency];
-    if (!cap || typeof price.amount !== 'number') continue;
-    const amount = Math.max(0, roundCurrencyAmount(price.amount - cap.amount, cap.decimals));
-    result[currency] = {
-      amount,
-      decimals: cap.decimals,
-      symbol: cap.symbol,
-      display: formatPrice(currency, amount),
-      formattedAmount: cap.decimals === 0 ? String(Math.round(amount)) : amount.toFixed(cap.decimals),
-      inUse: price.inUse
-    };
-  }
-  return result;
-}
-
 function roundCurrencyAmount(value, decimals) {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
 }
 
-function formatPrice(currency, amount) {
-  const decimals = DISCOUNT_CAPS[currency]?.decimals || (['JPY', 'KRW', 'IDR'].includes(currency) ? 0 : 2);
-  const symbol = CURRENCY_SYMBOLS[currency] || `${currency} `;
+function currencyDecimals(currency, template) {
+  if (typeof template?.decimals === 'number') return template.decimals;
+  return ['JPY', 'KRW', 'IDR'].includes(currency) ? 0 : 2;
+}
+
+function formatPrice(currency, amount, template) {
+  const decimals = currencyDecimals(currency, template);
+  const symbol = template?.symbol || CURRENCY_SYMBOLS[currency] || `${currency} `;
   return `${symbol}${decimals === 0 ? Math.round(amount) : amount.toFixed(decimals)}`;
 }
 
@@ -414,7 +509,81 @@ function currentCatalogItem() {
 
 function priceFor(item, currency) {
   if (!item) return undefined;
-  return item.discountedPrices?.[currency] || item.prices?.[currency];
+  const basePrice = item.prices?.[currency];
+  if (!basePrice) return undefined;
+  const estimated = estimateCouponPrice(basePrice, currency, item.countryCode, item.durationDays);
+  if (estimated) return estimated;
+  return { ...basePrice, label: state.couponError ? '官方原价' : '官方原价' };
+}
+
+function estimateCouponPrice(basePrice, currency, countryCode, durationDays) {
+  const coupon = state.coupon;
+  if (!coupon || !couponAppliesToCountry(coupon, countryCode) || !couponIsActive(coupon)) return undefined;
+  if (typeof basePrice.amount !== 'number') return undefined;
+
+  const decimals = currencyDecimals(currency, basePrice);
+  let amount;
+
+  if (coupon.type === 'PERCENTAGE_CUT' && coupon.cutPercentage > 0) {
+    const percentage = coupon.cutPercentage > 1 ? coupon.cutPercentage / 100 : coupon.cutPercentage;
+    amount = basePrice.amount * Math.max(0, 1 - percentage);
+  } else if (coupon.type === 'AFFILIATED_INFLUENCER' && coupon.cutStrategy === 'TIERED_V1') {
+    const tierDiscount = frontTierDiscountAmount(currency, durationDays);
+    if (tierDiscount === undefined) return undefined;
+    amount = basePrice.amount - tierDiscount;
+  } else {
+    const cut = coupon.cutAmount?.[currency];
+    if (!cut || typeof cut.amount !== 'number') return undefined;
+    amount = basePrice.amount - cut.amount;
+  }
+
+  amount = Math.max(0, roundCurrencyAmount(amount, decimals));
+  return {
+    ...basePrice,
+    amount,
+    display: formatPrice(currency, amount, basePrice),
+    formattedAmount: decimals === 0 ? String(Math.round(amount)) : amount.toFixed(decimals),
+    estimated: true,
+    couponCode: coupon.code,
+    label: `预计 ${coupon.code}`
+  };
+}
+
+function frontTierDiscountAmount(currency, durationDays) {
+  const days = Number(durationDays);
+  const rate = FRONT_TIER_USD_TO_CURRENCY_RATE[currency];
+  if (!Number.isFinite(days) || typeof rate !== 'number') return undefined;
+  const tier = FRONT_TIER_USD_DISCOUNTS.find(item => days >= item.minDays);
+  if (!tier) return undefined;
+  return tier.amount * rate;
+}
+
+function convertToCnyAmount(currency, amount) {
+  const sourceRate = FRONT_TIER_USD_TO_CURRENCY_RATE[currency];
+  const cnyRate = FRONT_TIER_USD_TO_CURRENCY_RATE.CNY;
+  if (typeof sourceRate !== 'number' || typeof cnyRate !== 'number' || typeof amount !== 'number') return undefined;
+  return roundCurrencyAmount(amount * (cnyRate / sourceRate), 2);
+}
+
+function couponAppliesToCountry(coupon, countryCode) {
+  if (!coupon.countries?.length) return true;
+  return coupon.countries.some(country => country?.code === countryCode);
+}
+
+function couponIsActive(coupon) {
+  const now = Date.now();
+  if (coupon.startDate && Date.parse(coupon.startDate) > now) return false;
+  if (coupon.endDate && Date.parse(coupon.endDate) < now) return false;
+  return true;
+}
+
+function renderTopStatus() {
+  el.topStatus.textContent = `${DEFAULT_AFFILIATE_CODE} / ${DEFAULT_COUPON} · ${el.currency.value} · Chrome Storage`;
+}
+
+function renderCurrencyDependentViews() {
+  renderTopStatus();
+  renderPlans();
 }
 
 function countryMeta(code) {
@@ -446,6 +615,12 @@ function formatPlan(item) {
   return `${item.durationDays} Days · ${dataText}`;
 }
 
+function readQuantityInput() {
+  const quantity = Number.parseInt(el.quantity.value || '1', 10);
+  if (!Number.isInteger(quantity)) return 1;
+  return Math.min(Math.max(quantity, 1), 20);
+}
+
 function renderPlans() {
   if (state.catalog.length === 0) {
     el.plans.innerHTML = '<div class="empty">没有可用套餐</div>';
@@ -465,7 +640,7 @@ function renderPlans() {
     const price = priceFor(item, el.currency.value);
     return `<button type="button" class="plan-row${active}" data-sku="${escapeHtml(item.sku)}">
       <div><div class="plan-title">${escapeHtml(formatPlan(item))}</div><div class="plan-meta"><span class="country-inline">${escapeHtml(countryPlainText(item.countryCode))}</span> · ${escapeHtml(item.sku)}</div></div>
-      <div class="plan-price">${escapeHtml(price?.display || '--')}<small>after coupon</small></div>
+      <div class="plan-price">${escapeHtml(price?.display || '--')}<small>${escapeHtml(price?.label || '官方原价')}</small></div>
     </button>`;
   }).join('');
 
@@ -486,9 +661,62 @@ function renderPlans() {
   renderSummary();
 }
 
+function selectableCurrencies() {
+  return Array.from(el.currency.options).map(option => option.value).filter(Boolean);
+}
+
+function recommendationForCurrentCountry() {
+  const currencies = selectableCurrencies();
+  const candidates = [];
+
+  for (const item of state.catalog) {
+    for (const currency of currencies) {
+      const price = priceFor(item, currency);
+      if (!price || typeof price.amount !== 'number') continue;
+      const cnyAmount = convertToCnyAmount(currency, price.amount);
+      if (cnyAmount === undefined) continue;
+      const dailyCny = item.durationDays > 0 ? roundCurrencyAmount(cnyAmount / item.durationDays, 2) : cnyAmount;
+      candidates.push({ item, currency, price, cnyAmount, dailyCny });
+    }
+  }
+
+  if (!candidates.length) return undefined;
+
+  return candidates.sort((left, right) => {
+    const totalDelta = left.cnyAmount - right.cnyAmount;
+    if (Math.abs(totalDelta) > RECOMMEND_TIE_CNY) return totalDelta;
+    const dailyDelta = left.dailyCny - right.dailyCny;
+    if (Math.abs(dailyDelta) > RECOMMEND_TIE_CNY) return dailyDelta;
+    return left.item.durationDays - right.item.durationDays || left.currency.localeCompare(right.currency);
+  })[0];
+}
+
+function recommendBestValuePlan() {
+  if (!state.catalog.length) {
+    setStatus(el.purchaseStatus, '当前没有可推荐的套餐。', 'warn');
+    return;
+  }
+
+  const recommendation = recommendationForCurrentCountry();
+  if (!recommendation) {
+    setStatus(el.purchaseStatus, '当前套餐缺少可换算成人民币的价格。', 'warn');
+    return;
+  }
+
+  el.currency.value = recommendation.currency;
+  syncSelectWidget(el.currency);
+  state.selectedSku = recommendation.item.sku;
+  renderCurrencyDependentViews();
+  setStatus(
+    el.purchaseStatus,
+    `已推荐最省钱：${formatPlan(recommendation.item)} · ${recommendation.currency} ${recommendation.price.display} · 约 ¥${recommendation.cnyAmount.toFixed(2)}。`,
+    'ok'
+  );
+}
+
 function renderSummary() {
   const item = currentCatalogItem();
-  const quantity = Number.parseInt(el.quantity.value || '1', 10) || 1;
+  const quantity = readQuantityInput();
   el.summaryQty.textContent = String(quantity);
   if (!item) {
     el.summaryTitle.innerHTML = countrySummaryHtml(el.country.value);
@@ -499,7 +727,7 @@ function renderSummary() {
   }
   const price = priceFor(item, el.currency.value);
   el.summaryTitle.innerHTML = countrySummaryHtml(item.countryCode);
-  el.summaryAmount.textContent = price?.display || '--';
+  el.summaryAmount.textContent = price ? (quantity > 1 ? `${price.display} x ${quantity}` : price.display) : '--';
   el.summaryPlan.textContent = formatPlan(item);
   el.summarySku.textContent = item.sku;
 }
@@ -528,118 +756,208 @@ async function createOrder() {
 
   setButtonLoading(el.createOrderBtn, true, '创建中');
   setStatus(el.purchaseStatus, '正在创建邮箱和 checkout。');
+  const createdRecords = [];
   try {
     const countryCode = el.country.value;
     const currency = el.currency.value;
-    const quantity = Number.parseInt(el.quantity.value || '1', 10) || 1;
-    const mailbox = await createMailbox(el.mailProvider.value);
-    const productUrl = officialProductUrl(countryCode, product, currency);
-    const headers = storefrontHeaders(productUrl);
-    const payload = {
-      sku: product.sku,
-      qty: quantity,
-      currency,
-      isExtension: false,
-      coupon: DEFAULT_COUPON
-    };
+    const quantity = readQuantityInput();
+    const batchId = crypto.randomUUID();
 
-    console.debug('[Superalink Extension] create checkout payload', payload);
-    const createResult = await apiJson(`${STORE_API_BASE}/v2/checkout`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload)
-    }, '创建 checkout');
-    const order = createResult.order || createResult;
-    const orderId = required(order.uniqueId, '官方接口未返回订单号');
-    const buyerSessionId = required(order.buyer?.sessionID, '官方接口未返回 checkout session');
-    await setCheckoutCookies(buyerSessionId);
+    for (let index = 1; index <= quantity; index++) {
+      setStatus(el.purchaseStatus, `正在创建第 ${index} / ${quantity} 个邮箱和订单。`);
+      const record = await createSingleCheckoutRecord({
+        product,
+        catalogItem,
+        countryCode,
+        currency,
+        batchId,
+        orderIndex: index,
+        orderTotal: quantity
+      });
+      createdRecords.push(record);
+      upsertOrder(record);
+      await saveOrders();
+      renderHistory();
+      renderMailOrderSelect();
+      renderCurrentOrders(createdRecords);
+    }
 
-    const updateResult = await apiJson(`${STORE_API_BASE}/v2/checkout/${encodeURIComponent(orderId)}`, {
-      method: 'PATCH',
-      credentials: 'include',
-      headers: storefrontHeaders(productUrl),
-      body: JSON.stringify({
-        voucherRecipientEmail: mailbox.email,
-        voucherRecipientIsSubscribingToNewsletter: false
-      })
-    }, '写入接收邮箱');
-    const updatedOrder = updateResult.order || updateResult;
-
-    const now = new Date().toISOString();
-    const record = {
-      id: crypto.randomUUID(),
-      createdAt: now,
-      updatedAt: now,
-      status: 'created',
-      statusText: '订单已创建，等待付款',
-      mailbox,
-      email: mailbox.email,
-      orderId,
-      buyerSessionId,
-      checkoutUrl: checkoutUrl(orderId, product, currency),
-      officialProductUrl: productUrl,
-      affiliateCode: DEFAULT_COUPON,
-      coupon: DEFAULT_COUPON,
-      countryCode,
-      sku: product.sku,
-      quantity,
-      currency,
-      amountDisplay: extractAmountDisplay(updatedOrder, currency) || extractAmountDisplay(order, currency) || priceFor(catalogItem, currency)?.display,
-      esimMailInfo: []
-    };
-
-    upsertOrder(record);
-    state.activeOrderId = record.id;
-    state.currentOrderId = record.id;
-    await saveOrders();
-    renderHistory();
+    state.activeOrderId = createdRecords[0]?.id || '';
+    state.currentOrderId = createdRecords[0]?.id || '';
+    state.currentOrderIds = createdRecords.map(record => record.id);
+    state.paymentButtonMode = 'open';
     renderMailOrderSelect();
-    renderCurrentOrder(record);
-    setStatus(el.purchaseStatus, `订单已创建，请手动打开付款页。邮箱: ${mailbox.email}`, 'ok');
+    renderCurrentOrders(createdRecords);
+    setStatus(el.purchaseStatus, `已创建 ${createdRecords.length} 个订单和 ${createdRecords.length} 个邮箱，请打开付款页。`, 'ok');
   } catch (error) {
     console.debug('[Superalink Extension] create order failed', error);
-    setStatus(el.purchaseStatus, error.message || String(error), 'bad');
+    const message = error.message || String(error);
+    if (createdRecords.length) {
+      state.currentOrderIds = createdRecords.map(record => record.id);
+      state.currentOrderId = createdRecords[0].id;
+      state.paymentButtonMode = 'open';
+      renderCurrentOrders(createdRecords);
+      setStatus(el.purchaseStatus, `已创建 ${createdRecords.length} 个订单，后续创建失败: ${message}`, 'warn');
+    } else {
+      setStatus(el.purchaseStatus, message, 'bad');
+    }
   } finally {
     setButtonLoading(el.createOrderBtn, false);
   }
+}
+
+async function createSingleCheckoutRecord({ product, catalogItem, countryCode, currency, batchId, orderIndex, orderTotal }) {
+  const mailbox = await createMailbox(el.mailProvider.value);
+  const productUrl = officialProductUrl(countryCode, product, currency);
+  const headers = storefrontHeaders(productUrl);
+  const payload = {
+    sku: product.sku,
+    qty: 1,
+    currency,
+    isExtension: false,
+    coupon: DEFAULT_COUPON
+  };
+
+  console.debug('[Superalink Extension] create checkout payload', { ...payload, orderIndex, orderTotal });
+  const createResult = await apiJson(`${STORE_API_BASE}/v2/checkout`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  }, '创建 checkout');
+  const order = createResult.order || createResult;
+  const orderId = required(order.uniqueId, '官方接口未返回订单号');
+  const buyerSessionId = required(order.buyer?.sessionID, '官方接口未返回 checkout session');
+  await setCheckoutCookies(buyerSessionId);
+
+  const updateResult = await apiJson(`${STORE_API_BASE}/v2/checkout/${encodeURIComponent(orderId)}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: storefrontHeaders(productUrl),
+    body: JSON.stringify({
+      voucherRecipientEmail: mailbox.email,
+      voucherRecipientIsSubscribingToNewsletter: false
+    })
+  }, '写入接收邮箱');
+  const updatedOrder = updateResult.order || updateResult;
+
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    batchId,
+    orderIndex,
+    orderTotal,
+    createdAt: now,
+    updatedAt: now,
+    status: 'created',
+    statusText: orderTotal > 1 ? `订单已创建，等待付款 ${orderIndex}/${orderTotal}` : '订单已创建，等待付款',
+    mailbox,
+    email: mailbox.email,
+    orderId,
+    buyerSessionId,
+    checkoutUrl: checkoutUrl(orderId, product, currency),
+    officialProductUrl: productUrl,
+    affiliateCode: DEFAULT_AFFILIATE_CODE,
+    coupon: DEFAULT_COUPON,
+    couponType: state.coupon?.type || '',
+    couponDescription: state.coupon?.description || '',
+    countryCode,
+    sku: product.sku,
+    quantity: 1,
+    currency,
+    amountDisplay: extractAmountDisplay(updatedOrder, currency) || extractAmountDisplay(order, currency) || priceFor(catalogItem, currency)?.display,
+    esimMailInfo: []
+  };
 }
 
 function currentCreatedOrder() {
   return state.orders.find(order => order.id === state.currentOrderId);
 }
 
-function renderCurrentOrder(order) {
-  if (!order) {
+function currentCreatedOrders() {
+  const ids = state.currentOrderIds.length ? state.currentOrderIds : [state.currentOrderId].filter(Boolean);
+  return ids.map(id => state.orders.find(order => order.id === id)).filter(Boolean);
+}
+
+function renderCurrentOrders(orders) {
+  const items = Array.isArray(orders) ? orders : (orders ? [orders] : []);
+  if (!items.length) {
     el.currentOrderPanel.hidden = true;
     return;
   }
   el.currentOrderPanel.hidden = false;
-  el.currentOrderCountry.textContent = countryPlainText(order.countryCode || '');
-  el.currentOrderEmail.textContent = order.email || '--';
-  el.currentOrderId.textContent = order.orderId || '--';
+  el.currentOrderCountry.textContent = countryPlainText(items[0].countryCode || '');
+  el.currentOrderCount.textContent = String(items.length);
+  el.currentOrderEmail.textContent = items.length === 1 ? (items[0].email || '--') : `${items.length} 个邮箱`;
+  el.currentOrderId.textContent = items.length === 1 ? (items[0].orderId || '--') : `${items.length} 个订单`;
+  el.currentOrderList.innerHTML = items.map((order, index) => {
+    return `<div class="current-order-item">
+      <span>订单 ${index + 1} / ${items.length}</span>
+      <strong>${escapeHtml(order.email || '--')}</strong>
+      <span>${escapeHtml(order.orderId || '--')}</span>
+    </div>`;
+  }).join('');
+  const allReceived = items.every(order => order.status === 'esim_received');
+  const hasOpenedPayment = items.some(order => order.status === 'payment_opened');
+  const hasProgress = items.some(order => order.status !== 'created');
+  el.openPaymentBtn.disabled = allReceived;
+  if (allReceived) {
+    el.openPaymentBtn.textContent = '已收集完成';
+  } else if (state.paymentButtonMode === 'confirm' || hasOpenedPayment) {
+    el.openPaymentBtn.textContent = '已完成付款，开始收集';
+  } else {
+    el.openPaymentBtn.textContent = hasProgress ? '打开下一付款页' : '打开付款页';
+  }
 }
 
-function openCurrentPaymentPage() {
-  const order = currentCreatedOrder();
+async function handlePaymentButton() {
+  if (state.paymentButtonMode === 'confirm') {
+    await confirmCurrentPaymentsAndCollect();
+    return;
+  }
+  await openCurrentPaymentPages();
+}
+
+async function openCurrentPaymentPages() {
+  const orders = currentCreatedOrders();
+  const order = orders.find(item => item.status === 'created')
+    || orders.find(item => !['esim_received', 'payment_opened', 'collecting_mail'].includes(item.status));
   if (!order?.checkoutUrl) {
+    if (orders.some(item => item.status === 'payment_opened')) {
+      state.paymentButtonMode = 'confirm';
+      renderCurrentOrders(orders);
+      setStatus(el.purchaseStatus, '已有付款页等待确认，付款完成后点击收集。', 'warn');
+      return;
+    }
     setStatus(el.purchaseStatus, '当前没有可打开的付款页。', 'warn');
     return;
   }
-  chrome.tabs.create({ url: order.checkoutUrl });
+  const index = orders.findIndex(item => item.id === order.id);
+  await setCheckoutCookies(order.buyerSessionId);
+  chrome.tabs.create({ url: order.checkoutUrl, active: true });
+  order.status = 'payment_opened';
+  order.statusText = orders.length > 1 ? `付款页已打开，等待确认 ${index + 1}/${orders.length}` : '付款页已打开，等待确认';
+  order.updatedAt = new Date().toISOString();
+  upsertOrder(order);
+  await saveOrders();
+  state.paymentButtonMode = 'confirm';
+  renderHistory();
+  renderCurrentOrders(orders);
+  setStatus(el.purchaseStatus, `已打开第 ${index + 1} / ${orders.length} 个付款页。付款完成后点击“已完成付款，开始收集”。`, 'ok');
 }
 
 async function copyCurrentEmail() {
-  const order = currentCreatedOrder();
-  if (!order?.email) {
+  const orders = currentCreatedOrders();
+  const emails = orders.map(order => order.email).filter(Boolean);
+  if (!emails.length) {
     setStatus(el.purchaseStatus, '当前订单没有邮箱。', 'warn');
     return;
   }
-  await navigator.clipboard.writeText(order.email);
-  setStatus(el.purchaseStatus, '邮箱已复制。', 'ok');
+  await navigator.clipboard.writeText(emails.join('\n'));
+  setStatus(el.purchaseStatus, emails.length > 1 ? '邮箱已批量复制。' : '邮箱已复制。', 'ok');
 }
 
 function goMailViewWithCurrentOrder() {
-  const order = currentCreatedOrder();
+  const order = currentCreatedOrder() || currentCreatedOrders()[0];
   if (order?.id) {
     state.activeOrderId = order.id;
     renderMailOrderSelect();
@@ -656,7 +974,7 @@ function required(value, message) {
 function officialProductUrl(countryCode, product, currency) {
   const slug = COUNTRY_SLUGS[countryCode] || countryCode.toLowerCase().replaceAll('_', '-');
   const url = new URL(`/${DEFAULT_LOCALE}/esim/${slug}`, SUPERALINK_BASE_URL);
-  url.searchParams.set('affiliate_code', DEFAULT_COUPON);
+  url.searchParams.set('affiliate_code', DEFAULT_AFFILIATE_CODE);
   url.searchParams.set('duration', String(durationDays(product) || 5));
   url.searchParams.set('option', 'unlimited');
   url.searchParams.set('promo', 'affiliate-influencer');
@@ -668,7 +986,7 @@ function officialProductUrl(countryCode, product, currency) {
 
 function checkoutUrl(orderId, product, currency) {
   const url = new URL(`/${DEFAULT_LOCALE}/checkout/${orderId}`, SUPERALINK_BASE_URL);
-  url.searchParams.set('affiliate_code', DEFAULT_COUPON);
+  url.searchParams.set('affiliate_code', DEFAULT_AFFILIATE_CODE);
   url.searchParams.set('duration', String(durationDays(product) || 5));
   url.searchParams.set('option', 'unlimited');
   url.searchParams.set('promo', 'affiliate-influencer');
@@ -686,35 +1004,110 @@ function extractAmountDisplay(order, currency) {
 }
 
 function renderHistory() {
-  if (state.orders.length === 0) {
+  const baseOrders = visibleOrders();
+  renderHistoryFilters(baseOrders);
+  if (baseOrders.length === 0) {
+    state.activeOrderId = '';
     el.historyList.innerHTML = '<div class="empty">暂无订单记录</div>';
-    el.detailPanel.innerHTML = '<div class="empty">创建订单后会显示历史。</div>';
-    setStatus(el.historyStatus, '暂无本地订单。', 'warn');
+    el.detailPanel.innerHTML = `<div class="empty">${state.orders.length ? '全部订单已作废。' : '创建订单后会显示历史。'}</div>`;
+    setStatus(el.historyStatus, state.orders.length ? `全部 ${state.orders.length} 条订单已作废。` : '暂无本地订单。', 'warn');
     return;
   }
 
-  const activeId = state.activeOrderId || state.orders[0].id;
-  state.activeOrderId = activeId;
-  el.historyList.innerHTML = state.orders.map(order => {
+  const orders = filteredHistoryOrders(baseOrders);
+  if (orders.length === 0) {
+    state.activeOrderId = '';
+    el.historyList.innerHTML = `<div class="empty">当前筛选没有 ${escapeHtml(historyFilterLabel(state.historyFilter))} 订单</div>`;
+    el.detailPanel.innerHTML = '<div class="empty">请选择其他状态筛选。</div>';
+    setStatus(el.historyStatus, `当前筛选 0 条。全部可用记录 ${baseOrders.length} 条。`, 'warn');
+    return;
+  }
+
+  const activeOrder = ensureActiveVisibleOrder(orders);
+  const activeId = activeOrder?.id || '';
+  el.historyList.innerHTML = orders.map(order => {
     const active = order.id === activeId ? ' active' : '';
     const badgeClass = order.status === 'esim_received' ? ' ok' : (order.status === 'mail_timeout' ? ' bad' : '');
     const country = countryPlainText(order.countryCode || '');
-    return `<button type="button" class="history-row${active}" data-order-id="${escapeHtml(order.id)}">
-      <div class="history-main"><span>${escapeHtml(order.email || order.orderId)}</span><span class="badge${badgeClass}">${escapeHtml(order.statusText || order.status)}</span></div>
-      <div class="history-meta">${escapeHtml(order.amountDisplay || order.currency || '--')} · ${escapeHtml(formatTime(order.updatedAt))}</div>
-      <div class="history-meta">${escapeHtml(country)}</div>
-      <div class="history-meta">${escapeHtml(order.sku || '--')}</div>
-      <div class="history-meta">${escapeHtml(order.orderId || '--')}</div>
-    </button>`;
+    const batchText = order.orderTotal > 1 ? `第 ${order.orderIndex || 1}/${order.orderTotal} 单 · ` : '';
+    const label = order.email || order.orderId || order.id;
+    const isPendingVoid = state.pendingVoidOrderId === order.id;
+    return `<div class="history-row${active}">
+      <button type="button" class="history-select" data-order-id="${escapeHtml(order.id)}">
+        <div class="history-main"><span>${escapeHtml(order.email || order.orderId)}</span><span class="badge${badgeClass}">${escapeHtml(order.statusText || order.status)}</span></div>
+        <div class="history-meta">${escapeHtml(batchText)}${escapeHtml(order.amountDisplay || order.currency || '--')} · ${escapeHtml(formatTime(order.updatedAt))}</div>
+        <div class="history-meta">${escapeHtml(country)}</div>
+        <div class="history-meta">${escapeHtml(order.sku || '--')}</div>
+        <div class="history-meta">${escapeHtml(order.orderId || '--')}</div>
+      </button>
+      <button type="button" class="history-void-btn${isPendingVoid ? ' confirm' : ''}" data-void-order-id="${escapeHtml(order.id)}" aria-label="${isPendingVoid ? '确认作废订单' : '作废订单'} ${escapeHtml(label)}">${isPendingVoid ? '确认作废' : '作废'}</button>
+    </div>`;
   }).join('');
   el.historyList.querySelectorAll('[data-order-id]').forEach(button => {
     button.addEventListener('click', () => {
+      state.pendingVoidOrderId = '';
       state.activeOrderId = button.dataset.orderId || '';
       renderHistory();
     });
   });
-  renderDetail(state.orders.find(order => order.id === activeId) || state.orders[0]);
-  setStatus(el.historyStatus, `已读取 ${state.orders.length} 条记录。`, 'ok');
+  el.historyList.querySelectorAll('[data-void-order-id]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      requestVoidOrder(button.dataset.voidOrderId || '').catch(error => setStatus(el.historyStatus, error.message || String(error), 'bad'));
+    });
+  });
+  renderDetail(orders.find(order => order.id === activeId) || orders[0]);
+  setStatus(el.historyStatus, `已读取 ${orders.length} / ${baseOrders.length} 条可用记录。${state.orders.length > baseOrders.length ? ` 已隐藏 ${state.orders.length - baseOrders.length} 条作废记录。` : ''}`, 'ok');
+}
+
+function renderHistoryFilters(orders = visibleOrders()) {
+  const counts = new Map(HISTORY_FILTERS.map(filter => [filter.value, 0]));
+  counts.set('all', orders.length);
+  for (const order of orders) {
+    const group = historyFilterGroup(order);
+    counts.set(group, (counts.get(group) || 0) + 1);
+  }
+
+  el.historyFilters.innerHTML = HISTORY_FILTERS.map(filter => {
+    const active = state.historyFilter === filter.value ? ' active' : '';
+    return `<button type="button" class="history-filter${active}" data-history-filter="${escapeHtml(filter.value)}">${escapeHtml(filter.label)}<span>${counts.get(filter.value) || 0}</span></button>`;
+  }).join('');
+
+  el.historyFilters.querySelectorAll('[data-history-filter]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.historyFilter = button.dataset.historyFilter || 'all';
+      state.pendingVoidOrderId = '';
+      renderHistory();
+    });
+  });
+}
+
+async function requestVoidOrder(orderId) {
+  if (state.pendingVoidOrderId !== orderId) {
+    state.pendingVoidOrderId = orderId;
+    renderHistory();
+    setStatus(el.historyStatus, '再次点击“确认作废”会隐藏这条订单。', 'warn');
+    return;
+  }
+  await voidOrder(orderId);
+}
+
+async function voidOrder(orderId) {
+  const order = state.orders.find(item => item.id === orderId);
+  if (!order || isVoidedOrder(order)) return;
+  const label = order.email || order.orderId || order.id;
+
+  const now = new Date().toISOString();
+  order.voidedAt = now;
+  order.updatedAt = now;
+  upsertOrder(order);
+  await saveOrders();
+
+  state.pendingVoidOrderId = '';
+  if (state.activeOrderId === orderId) ensureActiveVisibleOrder();
+  renderHistory();
+  renderMailOrderSelect();
+  setStatus(el.historyStatus, `已作废订单：${label}`, 'ok');
 }
 
 function renderDetail(order) {
@@ -724,6 +1117,7 @@ function renderDetail(order) {
     copyRow('目的地', countryPlainText(order.countryCode || ''), '目的地'),
     copyRow('邮箱', order.email, '邮箱'),
     copyRow('订单', order.orderId, '订单号'),
+    copyRow('批次', order.orderTotal > 1 ? `${order.orderIndex || 1} / ${order.orderTotal}` : '', '批次'),
     copyRow('SKU', order.sku, 'SKU'),
     copyRow('金额', order.amountDisplay || order.currency || '', '金额')
   ].join('');
@@ -814,8 +1208,18 @@ function attachCopyHandlers(container) {
 }
 
 function renderMailOrderSelect() {
-  el.mailOrderSelect.innerHTML = state.orders.map(order => `<option value="${escapeHtml(order.id)}">${escapeHtml(countryPlainText(order.countryCode || ''))} · ${escapeHtml(order.email || order.orderId)}</option>`).join('');
-  if (state.activeOrderId) el.mailOrderSelect.value = state.activeOrderId;
+  const orders = visibleOrders();
+  el.mailOrderSelect.innerHTML = orders.length
+    ? orders.map(order => `<option value="${escapeHtml(order.id)}">${escapeHtml(countryPlainText(order.countryCode || ''))} · ${escapeHtml(order.email || order.orderId)}</option>`).join('')
+    : '<option value="">暂无可查询订单</option>';
+  const activeOrder = ensureActiveVisibleOrder(orders);
+  el.mailOrderSelect.value = activeOrder?.id || '';
+  const hasOrders = orders.length > 0;
+  el.mailOrderSelect.disabled = !hasOrders;
+  el.collectMailBtn.disabled = !hasOrders;
+  el.listMailBtn.disabled = !hasOrders;
+  el.parseManualMailBtn.disabled = !hasOrders;
+  syncSelectWidget(el.mailOrderSelect);
 }
 
 async function listMessages(mailbox) {
@@ -855,9 +1259,85 @@ async function listMessages(mailbox) {
 }
 
 async function readSelectedMail() {
-  const order = state.orders.find(item => item.id === el.mailOrderSelect.value);
+  const order = findVisibleOrder(el.mailOrderSelect.value);
+  return readOrderMail(order);
+}
+
+async function readOrderMail(order) {
   if (!order?.mailbox) throw new Error('请选择带邮箱 token 的订单');
   return { order, messages: await listMessages(order.mailbox) };
+}
+
+function parseEsimInfos(messages) {
+  return messages
+    .map(message => parseEsimMail(`${message.subject || ''}\n${message.text || ''}\n${message.html || ''}`, message.subject, message.from))
+    .filter(Boolean);
+}
+
+function applyMailResult(order, messages, infos, timedOut = false) {
+  order.esimMailInfo = mergeEsimInfo(order.esimMailInfo || [], infos);
+  order.status = infos.length ? 'esim_received' : (timedOut ? 'mail_timeout' : 'mail_pending');
+  order.statusText = infos.length
+    ? '已收集 eSIM 邮件'
+    : (timedOut ? '等待超时，未找到 eSIM 邮件' : '邮箱可访问，未找到 eSIM 邮件');
+  order.updatedAt = new Date().toISOString();
+  upsertOrder(order);
+  return { order, messages, infos };
+}
+
+async function collectOrderMail(order, { poll = false, timeoutMs = AUTO_MAIL_WAIT_MS, intervalMs = AUTO_MAIL_INTERVAL_MS, onProgress } = {}) {
+  order.status = 'collecting_mail';
+  order.statusText = '正在收集 eSIM 邮件';
+  order.updatedAt = new Date().toISOString();
+  upsertOrder(order);
+  await saveOrders();
+  renderHistory();
+
+  if (!poll) {
+    const { messages } = await readOrderMail(order);
+    const infos = parseEsimInfos(messages);
+    const result = applyMailResult(order, messages, infos, false);
+    await saveOrders();
+    return result;
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let messages = [];
+  let infos = [];
+  let lastError;
+  let hadSuccessfulRead = false;
+  let attempt = 0;
+
+  while (Date.now() <= deadline) {
+    attempt++;
+    if (onProgress) onProgress(order, attempt);
+    try {
+      messages = (await readOrderMail(order)).messages;
+      hadSuccessfulRead = true;
+      infos = parseEsimInfos(messages);
+      if (infos.length) break;
+      lastError = undefined;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (Date.now() + intervalMs > deadline) break;
+    await wait(intervalMs);
+  }
+
+  if (lastError && !hadSuccessfulRead) {
+    order.status = 'mail_timeout';
+    order.statusText = '邮件读取失败';
+    order.error = lastError.message || String(lastError);
+    order.updatedAt = new Date().toISOString();
+    upsertOrder(order);
+    await saveOrders();
+    throw lastError;
+  }
+
+  const result = applyMailResult(order, messages, infos, infos.length === 0);
+  await saveOrders();
+  return result;
 }
 
 async function collectMail() {
@@ -866,14 +1346,7 @@ async function collectMail() {
   setStatus(el.mailStatus, '正在读取邮箱并解析 eSIM 邮件。');
   console.debug('[superalink-extension] collect mail started', { orderId: el.mailOrderSelect.value });
   try {
-    const { order, messages } = await readSelectedMail();
-    const infos = messages.map(message => parseEsimMail(`${message.subject || ''}\n${message.text || ''}\n${message.html || ''}`, message.subject, message.from)).filter(Boolean);
-    order.esimMailInfo = mergeEsimInfo(order.esimMailInfo || [], infos);
-    order.status = infos.length ? 'esim_received' : 'mail_pending';
-    order.statusText = infos.length ? '已收集 eSIM 邮件' : '邮箱可访问，未找到 eSIM 邮件';
-    order.updatedAt = new Date().toISOString();
-    upsertOrder(order);
-    await saveOrders();
+    const { order, messages, infos } = await collectOrderMail(findVisibleOrder(el.mailOrderSelect.value));
     renderMailMessages(messages);
     renderHistory();
     setStatus(el.mailStatus, order.statusText, infos.length ? 'ok' : 'warn');
@@ -882,6 +1355,61 @@ async function collectMail() {
     setStatus(el.mailStatus, error.message || String(error), 'bad');
   } finally {
     setButtonLoading(el.collectMailBtn, false);
+  }
+}
+
+async function confirmCurrentPaymentsAndCollect() {
+  const orders = currentCreatedOrders();
+  const targets = orders.filter(order => order.status === 'payment_opened');
+  if (!orders.length || !targets.length) {
+    setStatus(el.purchaseStatus, '当前没有可收集的订单。', 'warn');
+    return;
+  }
+
+  setButtonLoading(el.openPaymentBtn, true, '收集中');
+  setStatus(el.purchaseStatus, `正在收集 0 / ${targets.length} 个邮箱。`);
+  let finished = 0;
+
+  try {
+    const results = await Promise.allSettled(targets.map(order => collectOrderMail(order, {
+      poll: true,
+      onProgress: (currentOrder, attempt) => {
+        setStatus(el.purchaseStatus, `正在轮询 ${currentOrder.email || currentOrder.orderId}，第 ${attempt} 次。`);
+      }
+    })));
+
+    finished = results.filter(result => result.status === 'fulfilled').length;
+    const received = targets.filter(order => order.status === 'esim_received').length;
+    const failed = results.length - finished;
+    await saveOrders();
+    renderHistory();
+    renderMailOrderSelect();
+    renderCurrentOrders(orders);
+
+    const firstReceived = orders.find(order => order.status === 'esim_received') || orders[0];
+    if (firstReceived?.id) {
+      state.activeOrderId = firstReceived.id;
+      setActiveView('history');
+    }
+
+    const batchReceived = orders.filter(order => order.status === 'esim_received').length;
+    const hasUnopened = orders.some(order => order.status === 'created');
+    state.paymentButtonMode = hasUnopened ? 'open' : 'confirm';
+
+    if (received === targets.length && hasUnopened) {
+      setStatus(el.purchaseStatus, `已收集 ${batchReceived} / ${orders.length} 个 eSIM 邮件，可以继续打开下一单付款页。`, 'ok');
+    } else if (received === targets.length) {
+      setStatus(el.purchaseStatus, `已收集 ${batchReceived} / ${orders.length} 个 eSIM 邮件。`, 'ok');
+    } else if (received > 0) {
+      setStatus(el.purchaseStatus, `已收集 ${batchReceived} / ${orders.length} 个 eSIM 邮件，剩余订单可稍后重试。`, 'warn');
+    } else if (failed > 0) {
+      setStatus(el.purchaseStatus, '邮件读取失败，请检查邮箱供应商或稍后重试。', 'bad');
+    } else {
+      setStatus(el.purchaseStatus, '暂未找到 eSIM 邮件，可稍后再次点击收集。', 'warn');
+    }
+  } finally {
+    setButtonLoading(el.openPaymentBtn, false);
+    renderCurrentOrders(orders);
   }
 }
 
@@ -915,7 +1443,7 @@ function renderMailMessages(messages) {
 }
 
 async function parseManualMail() {
-  const order = state.orders.find(item => item.id === el.mailOrderSelect.value);
+  const order = findVisibleOrder(el.mailOrderSelect.value);
   if (!order) {
     setStatus(el.mailStatus, '请选择订单。', 'warn');
     return;
@@ -1141,24 +1669,149 @@ async function importOrders(file) {
   setStatus(el.storageStatus, `已导入 ${incoming.length} 条记录。`, 'ok');
 }
 
+function selectedOptionText(select) {
+  const selected = select.options[select.selectedIndex];
+  return selected?.textContent?.trim() || '请选择';
+}
+
+function closeSelectWidget(select) {
+  const widget = state.selectWidgets.get(select);
+  if (!widget) return;
+  widget.root.classList.remove('open');
+  widget.trigger.setAttribute('aria-expanded', 'false');
+}
+
+function closeSelectWidgets(exceptSelect) {
+  for (const [select] of state.selectWidgets) {
+    if (select !== exceptSelect) closeSelectWidget(select);
+  }
+}
+
+function syncSelectWidget(select) {
+  const widget = state.selectWidgets.get(select);
+  if (!widget) return;
+  const options = Array.from(select.options);
+  widget.label.textContent = selectedOptionText(select);
+  widget.trigger.disabled = select.disabled || options.length === 0;
+  widget.root.classList.toggle('is-disabled', widget.trigger.disabled);
+
+  widget.menu.innerHTML = options.map(option => {
+    const active = option.value === select.value ? ' active' : '';
+    return `<button type="button" class="custom-select-option${active}" data-select-value="${escapeHtml(option.value)}">${escapeHtml(option.textContent || option.value)}</button>`;
+  }).join('');
+
+  widget.menu.querySelectorAll('[data-select-value]').forEach(optionButton => {
+    optionButton.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      select.value = optionButton.dataset.selectValue || '';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      closeSelectWidget(select);
+      syncSelectWidget(select);
+    });
+  });
+
+  if (widget.trigger.disabled) closeSelectWidget(select);
+}
+
+function enhanceSelect(select) {
+  if (state.selectWidgets.has(select)) return;
+
+  const root = document.createElement('div');
+  root.className = 'custom-select';
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'custom-select-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+
+  const label = document.createElement('span');
+  label.className = 'custom-select-value';
+  trigger.appendChild(label);
+
+  const menu = document.createElement('div');
+  menu.className = 'custom-select-menu';
+  menu.setAttribute('role', 'listbox');
+
+  root.appendChild(trigger);
+  root.appendChild(menu);
+  select.classList.add('native-select-enhanced');
+  select.insertAdjacentElement('afterend', root);
+
+  state.selectWidgets.set(select, { root, trigger, label, menu });
+
+  trigger.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (trigger.disabled) return;
+    const willOpen = !root.classList.contains('open');
+    closeSelectWidgets(select);
+    syncSelectWidget(select);
+    root.classList.toggle('open', willOpen);
+    trigger.setAttribute('aria-expanded', String(willOpen));
+  });
+
+  select.addEventListener('change', () => syncSelectWidget(select));
+  syncSelectWidget(select);
+}
+
+function enhanceSelectControls() {
+  document.querySelectorAll('select').forEach(select => enhanceSelect(select));
+  document.addEventListener('pointerdown', event => {
+    if (!(event.target instanceof Element)) return;
+    if (!event.target.closest('.custom-select')) closeSelectWidgets();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeSelectWidgets();
+  });
+}
+
+function runButtonFeedback(target) {
+  if (!target || target.disabled || target.classList.contains('action-loading')) return;
+  target.classList.remove('is-pressing');
+  void target.offsetWidth;
+  target.classList.add('is-pressing');
+  window.setTimeout(() => target.classList.remove('is-pressing'), 260);
+}
+
+function closestActionControl(target) {
+  if (!(target instanceof Element)) return undefined;
+  return target.closest('button, .file-btn');
+}
+
+function bindButtonFeedback() {
+  document.addEventListener('pointerdown', event => {
+    runButtonFeedback(closestActionControl(event.target));
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    runButtonFeedback(closestActionControl(event.target));
+  });
+}
+
 function initCountries() {
   el.country.innerHTML = COUNTRIES.map(country => `<option value="${country.code}">${countryOptionLabel(country)}</option>`).join('');
   el.country.value = DEFAULT_COUNTRY_CODE;
   el.currency.value = DEFAULT_CURRENCY;
   el.quantity.value = '1';
+  renderTopStatus();
 }
 
 function bindEvents() {
+  bindButtonFeedback();
   el.navButtons.forEach(button => button.addEventListener('click', () => setActiveView(button.dataset.view)));
   el.country.addEventListener('change', loadCatalog);
-  el.currency.addEventListener('change', renderSummary);
+  el.currency.addEventListener('change', renderCurrencyDependentViews);
   el.quantity.addEventListener('input', renderSummary);
   el.planToggleBtn.addEventListener('click', () => {
     state.plansExpanded = !state.plansExpanded;
     renderPlans();
   });
+  el.recommendPlanBtn.addEventListener('click', recommendBestValuePlan);
   el.createOrderBtn.addEventListener('click', createOrder);
-  el.openPaymentBtn.addEventListener('click', openCurrentPaymentPage);
+  el.openPaymentBtn.addEventListener('click', () => handlePaymentButton());
   el.copyCurrentEmailBtn.addEventListener('click', copyCurrentEmail);
   el.goMailBtn.addEventListener('click', goMailViewWithCurrentOrder);
   el.refreshHistoryBtn.addEventListener('click', refreshHistory);
@@ -1180,6 +1833,7 @@ function bindEvents() {
 async function init() {
   bindEvents();
   initCountries();
+  enhanceSelectControls();
   await loadOrders();
   renderHistory();
   renderMailOrderSelect();

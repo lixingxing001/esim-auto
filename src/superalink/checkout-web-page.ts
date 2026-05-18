@@ -1372,6 +1372,7 @@ export function renderCheckoutPage(config: CheckoutPageConfig): string {
                 <div class="divider"></div>
 
                 <div id="paypalHost" class="paypal-host"></div>
+                <div id="alipayHost" class="method-tabs" hidden></div>
                 <div id="flowStatus" class="status">先创建订单。</div>
               </div>
             </aside>
@@ -1475,6 +1476,7 @@ export function renderCheckoutPage(config: CheckoutPageConfig): string {
       sessionEmail: document.getElementById('sessionEmail'),
       sessionOrder: document.getElementById('sessionOrder'),
       paypalHost: document.getElementById('paypalHost'),
+      alipayHost: document.getElementById('alipayHost'),
       flowStatus: document.getElementById('flowStatus'),
       esimResult: document.getElementById('esimResult'),
       esimResultTitle: document.getElementById('esimResultTitle'),
@@ -2070,13 +2072,14 @@ export function renderCheckoutPage(config: CheckoutPageConfig): string {
         el.sessionOrder.textContent = state.session.orderId;
         el.mailLookupEmail.value = state.session.email;
         el.summaryAmount.textContent = state.session.amountDisplay || el.summaryAmount.textContent;
-        setStatus('订单已创建，可使用 PayPal 支付。', 'ok');
+        setStatus('订单已创建，正在加载可用支付方式。', 'ok');
         console.debug('[Checkout] 创建订单成功', {
           orderId: state.session.orderId,
           email: state.session.email,
-          amount: state.session.amountDisplay || ''
+          amount: state.session.amountDisplay || '',
+          paymentMethods: state.session.paymentMethods || {}
         });
-        await setupPaypal();
+        await setupPaymentMethods();
       } catch (error) {
         setStatus(error.message || String(error), 'bad');
         console.debug('[Checkout] 创建订单失败', error);
@@ -2088,6 +2091,8 @@ export function renderCheckoutPage(config: CheckoutPageConfig): string {
     function clearPaypal() {
       state.paypalLoadedForCurrency = '';
       el.paypalHost.innerHTML = '';
+      el.alipayHost.innerHTML = '';
+      el.alipayHost.hidden = true;
       el.sessionPanel.hidden = true;
       el.sessionCountry.textContent = '--';
       if (state.pollTimer) {
@@ -2122,6 +2127,79 @@ export function renderCheckoutPage(config: CheckoutPageConfig): string {
         };
         script.onerror = () => reject(new Error('PayPal SDK 加载失败'));
         document.head.appendChild(script);
+      });
+    }
+
+    async function setupPaymentMethods() {
+      if (!state.session) return;
+      const paymentMethods = state.session.paymentMethods || {};
+      const paypalAvailable = paymentMethods.paypal && paymentMethods.paypal.available;
+      const alipay = paymentMethods.alipay || {};
+      const alipayAvailable = state.session.currency === 'CNY' && alipay.available && alipay.redirectUrl;
+
+      el.paypalHost.innerHTML = '';
+      el.alipayHost.innerHTML = '';
+      el.alipayHost.hidden = true;
+
+      console.debug('[Checkout] 支付方式探测结果', {
+        orderId: state.session.orderId,
+        currency: state.session.currency,
+        paypalAvailable,
+        alipayAvailable,
+        alipayReason: alipay.reason || ''
+      });
+
+      if (alipayAvailable) {
+        setupAlipay(alipay);
+        setStatus('订单已创建，可使用支付宝支付。', 'ok');
+        return;
+      }
+
+      if (state.session.currency === 'CNY') {
+        setStatus('当前人民币订单未检测到支付宝可用，请更换币种或稍后再试。' + (alipay.reason ? ' 原因: ' + alipay.reason : ''), 'warn');
+        return;
+      }
+
+      if (paypalAvailable) {
+        setStatus('订单已创建，可使用 PayPal 支付。', 'ok');
+        await setupPaypal();
+        return;
+      }
+
+      setStatus('当前订单未检测到可用支付方式。', 'bad');
+    }
+
+    function setupAlipay(alipay) {
+      el.alipayHost.hidden = false;
+      el.alipayHost.innerHTML = '<button id="alipayPayBtn" class="method alipay" type="button">使用支付宝支付</button>';
+      const button = document.getElementById('alipayPayBtn');
+      if (!button) return;
+      button.addEventListener('click', async () => {
+        if (!state.session) return;
+        const paymentWindow = window.open('', '_blank', 'noopener,noreferrer');
+        console.debug('[Checkout] 打开支付宝支付', {
+          orderId: state.session.orderId,
+          currency: state.session.currency,
+          redirectUrl: alipay.redirectUrl,
+          popupCreated: Boolean(paymentWindow)
+        });
+        try {
+          await api('/api/alipay/start-collection', {
+            method: 'POST',
+            body: JSON.stringify({ token: state.session.token })
+          });
+          setStatus('已打开支付宝付款页，完成后请回到本页等待 eSIM 邮件。', 'ok');
+          if (paymentWindow) {
+            paymentWindow.location.href = alipay.redirectUrl;
+          } else {
+            window.location.href = alipay.redirectUrl;
+          }
+          startStatusPolling();
+        } catch (error) {
+          if (paymentWindow) paymentWindow.close();
+          setStatus(error.message || String(error), 'bad');
+          console.debug('[Checkout] 支付宝收集启动失败', error);
+        }
       });
     }
 

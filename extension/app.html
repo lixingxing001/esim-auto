@@ -14,7 +14,7 @@
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
         <span>Superalink Checkout</span>
       </div>
-      <div id="topStatus" class="top-status">FRONT0000 · THB · Chrome Storage</div>
+      <div id="topStatus" class="top-status">FRONT0000 / FRONT0000 · THB · Chrome Storage</div>
     </header>
 
     <aside class="sidebar">
@@ -53,6 +53,9 @@
                 <option value="tempmail-lol">tempmail.lol</option>
                 <option value="1secmail">1secmail</option>
               </select></label>
+            </div>
+            <div class="purchase-actions">
+              <button id="recommendPlanBtn" class="ghost recommend-btn" type="button">推荐最划算</button>
             </div>
             <div id="plans" class="plans">
               <div class="plan-skeleton" aria-hidden="true">
@@ -123,20 +126,22 @@
             <div class="amount" id="summaryAmount">--</div>
             <div class="kv"><span>套餐</span><b id="summaryPlan">--</b></div>
             <div class="kv"><span>SKU</span><span id="summarySku">--</span></div>
-            <div class="kv"><span>数量</span><span id="summaryQty">1</span></div>
+            <div class="kv"><span>订单数</span><span id="summaryQty">1</span></div>
             <button id="createOrderBtn" class="primary" type="button">创建订单</button>
             <div id="purchaseStatus" class="status">请选择套餐。</div>
             <div id="currentOrderPanel" class="email-box" hidden>
               <div class="kv"><span>目的地</span><span id="currentOrderCountry">--</span></div>
+              <div class="kv"><span>订单数</span><span id="currentOrderCount">--</span></div>
               <div class="kv"><span>邮箱</span><b id="currentOrderEmail">--</b></div>
               <div class="kv"><span>订单</span><span id="currentOrderId">--</span></div>
+              <div id="currentOrderList" class="current-order-list"></div>
               <div class="button-row">
                 <button id="openPaymentBtn" class="primary" type="button">打开付款页</button>
                 <button id="copyCurrentEmailBtn" class="ghost" type="button">复制邮箱</button>
               </div>
               <button id="goMailBtn" class="ghost" type="button">去邮箱查询</button>
             </div>
-            <div class="payment-note">付款会在 Superalink checkout 页面完成，插件负责保存订单并收集邮件。</div>
+            <div class="payment-note">付款会在 Superalink checkout 页面完成，付款后回到这里确认并收集邮件。</div>
           </aside>
         </div>
       </section>
@@ -151,6 +156,7 @@
         </div>
         <div class="history-grid">
           <section class="panel">
+            <div id="historyFilters" class="history-filters" role="group" aria-label="历史订单状态筛选"></div>
             <div id="historyStatus" class="status">读取历史中。</div>
             <div id="historyList" class="history-list"></div>
           </section>
