@@ -1,6 +1,6 @@
 {
   "name": "esim-auto",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Superalink eSIM registration and purchase helper",
   "type": "module",
   "scripts": {

@@ -1,8 +1,8 @@
 const STORE_API_BASE = 'https://storefront.api.superalink.com';
 const SUPERALINK_BASE_URL = 'https://www.superalink.com';
 const DEFAULT_LOCALE = 'en';
-const DEFAULT_AFFILIATE_CODE = 'FRONT0000';
-const DEFAULT_COUPON = 'FRONT0000';
+const DEFAULT_AFFILIATE_CODE = 'LEE000000';
+const DEFAULT_COUPON = 'LEE000000';
 const DEFAULT_COUNTRY_CODE = 'CN';
 const DEFAULT_CURRENCY = 'THB';
 const DEFAULT_SKU = 'CN-5GB_UNLIMITED-5GB-5-DAYS';
@@ -93,7 +93,7 @@ const VISIBLE_DAYS_BY_COUNTRY = {
   SA: [5, 6, 7, 10, 12, 15, 20, 30]
 };
 
-const FRONT_TIER_USD_DISCOUNTS = [
+const INFLUENCER_TIER_USD_DISCOUNTS = [
   { minDays: 30, amount: 12 },
   { minDays: 20, amount: 9 },
   { minDays: 15, amount: 7 },
@@ -101,7 +101,7 @@ const FRONT_TIER_USD_DISCOUNTS = [
   { minDays: 5, amount: 2 }
 ];
 
-const FRONT_TIER_USD_TO_CURRENCY_RATE = {
+const INFLUENCER_TIER_USD_TO_CURRENCY_RATE = {
   THB: 35,
   USD: 1,
   EUR: 0.8,
@@ -528,7 +528,7 @@ function estimateCouponPrice(basePrice, currency, countryCode, durationDays) {
     const percentage = coupon.cutPercentage > 1 ? coupon.cutPercentage / 100 : coupon.cutPercentage;
     amount = basePrice.amount * Math.max(0, 1 - percentage);
   } else if (coupon.type === 'AFFILIATED_INFLUENCER' && coupon.cutStrategy === 'TIERED_V1') {
-    const tierDiscount = frontTierDiscountAmount(currency, durationDays);
+    const tierDiscount = influencerTierDiscountAmount(currency, durationDays);
     if (tierDiscount === undefined) return undefined;
     amount = basePrice.amount - tierDiscount;
   } else {
@@ -549,18 +549,18 @@ function estimateCouponPrice(basePrice, currency, countryCode, durationDays) {
   };
 }
 
-function frontTierDiscountAmount(currency, durationDays) {
+function influencerTierDiscountAmount(currency, durationDays) {
   const days = Number(durationDays);
-  const rate = FRONT_TIER_USD_TO_CURRENCY_RATE[currency];
+  const rate = INFLUENCER_TIER_USD_TO_CURRENCY_RATE[currency];
   if (!Number.isFinite(days) || typeof rate !== 'number') return undefined;
-  const tier = FRONT_TIER_USD_DISCOUNTS.find(item => days >= item.minDays);
+  const tier = INFLUENCER_TIER_USD_DISCOUNTS.find(item => days >= item.minDays);
   if (!tier) return undefined;
   return tier.amount * rate;
 }
 
 function convertToCnyAmount(currency, amount) {
-  const sourceRate = FRONT_TIER_USD_TO_CURRENCY_RATE[currency];
-  const cnyRate = FRONT_TIER_USD_TO_CURRENCY_RATE.CNY;
+  const sourceRate = INFLUENCER_TIER_USD_TO_CURRENCY_RATE[currency];
+  const cnyRate = INFLUENCER_TIER_USD_TO_CURRENCY_RATE.CNY;
   if (typeof sourceRate !== 'number' || typeof cnyRate !== 'number' || typeof amount !== 'number') return undefined;
   return roundCurrencyAmount(amount * (cnyRate / sourceRate), 2);
 }

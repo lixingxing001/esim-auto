@@ -6,12 +6,12 @@ Superalink eSIM Chrome 插件工具。当前主开发面是 `extension/`，用�
 
 - Chrome 插件源码目录：`extension/`
 - Chrome 插件显示名：`Superalink eSIM Helper - Chrome`
-- Chrome 插件显示版本：`1.5.12 best value selector`
+- Chrome 插件显示版本：`1.0.0 LEE000000 release`
 - 插件压缩包产物：`output/superalink-esim-extension.zip`
 - 订单保存位置：Chrome 扩展的 `chrome.storage.local`
 - 订单保存键名：`superalinkOrders`
-- 默认优惠码：`FRONT0000`
-- 默认 Affiliate Code：`FRONT0000`
+- 默认优惠码：`LEE000000`
+- 默认 Affiliate Code：`LEE000000`
 - 默认币种：`THB`
 - 本地 Web checkout 已废弃，不再作为主要开发入口
 
@@ -26,7 +26,7 @@ Superalink eSIM Chrome 插件工具。当前主开发面是 `extension/`，用�
 - 历史页展示订单和 eSIM 信息
 - 历史页支持按全部、待付款、待收集、已收集、异常筛选订单
 - 历史页支持作废订单，作废后从历史列表和邮箱查询下拉隐藏，导出 JSON 仍保留记录
-- 套餐列表读取官方 coupon API；`FRONT0000 / TIERED_V1` 按天数阶梯做预计优惠价，订单创建后以 checkout 返回金额为最终金额
+- 套餐列表读取官方 coupon API；`LEE000000 / TIERED_V1` 按天数阶梯做预计优惠价，订单创建后以 checkout 返回金额为最终金额
 - 可一键推荐当前目的地下人民币等价总价最低的套餐和币种，推荐只负责选中，不会自动创建订单
 - 主要下拉框使用自定义动效下拉，避免浏览器原生下拉样式不一致
 - 数据页支持导入、导出订单 JSON

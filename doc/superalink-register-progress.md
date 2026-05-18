@@ -794,3 +794,59 @@
 
 - 人民币换算是插件内估算，不代表 PayPal、Stripe、银行卡或发卡行最终入账汇率。
 - 当前只遍历币种下拉框中可以实际选中的币种；如果后续要支持 IDR 等更多币种，需要先确认 checkout 可用性并补充下拉选项。
+
+## V1.5.13
+
+时间：2026-05-18
+
+已确认：
+
+- Lee 要求将默认优惠码从 `FRONT0000` 切换为 `LEE000000`。
+- 官方 coupon 接口已确认 `LEE000000` 当前存在，类型为 `AFFILIATED_INFLUENCER`，策略为 `TIERED_V1`。
+- `LEE000000` 当前最大档金额与原规则一致：USD `12`、CNY `87`、THB `420`。
+
+实现决策：
+
+- 同时替换默认 `DEFAULT_COUPON` 和 `DEFAULT_AFFILIATE_CODE`，避免 checkout 参数、顶部展示和订单记录不一致。
+- 将阶梯优惠常量从 `FRONT_TIER_*` 改为 `INFLUENCER_TIER_*`，避免默认码切换后变量名误导。
+- 插件 manifest 版本提升到 `1.5.13`，`version_name` 改为 `1.5.13 LEE000000 coupon`。
+
+验证记录：
+
+- `rtk npm run extension:check` 已通过。
+- `rtk npm run extension:pack` 已通过。
+- `rtk npm run check` 已通过。
+- `unzip -p output/superalink-esim-extension.zip manifest.json` 已确认 zip 内版本为 `1.5.13 LEE000000 coupon`。
+- `unzip -p output/superalink-esim-extension.zip app.js | rg ...` 已确认 zip 内默认 code 为 `LEE000000`，并包含 `INFLUENCER_TIER_*` 阶梯逻辑。
+- `unzip -p output/superalink-esim-extension.zip app.html | rg ...` 已确认顶部初始状态显示 `LEE000000 / LEE000000`。
+
+已知坑位：
+
+- 历史进度文档中旧版本仍保留 `FRONT0000` 记录，那些是历史决策，不代表当前插件默认值。
+
+## V1.0.0
+
+时间：2026-05-18
+
+已确认：
+
+- Lee 要求构建 GitHub Releases 使用的 `1.0.0` 版本并发布到 GitHub。
+- 当前默认优惠码和 Affiliate Code 已切换为 `LEE000000`。
+
+实现决策：
+
+- 插件 manifest 版本设置为 `1.0.0`，`version_name` 设置为 `1.0.0 LEE000000 release`。
+- `package.json` 版本同步设置为 `1.0.0`。
+- 发布资产使用 `output/superalink-esim-extension.zip`。
+
+验证记录：
+
+- `rtk npm run extension:check` 已通过。
+- `rtk npm run extension:pack` 已通过。
+- `rtk npm run check` 已通过。
+- `rtk npm install --package-lock-only` 已通过，用于同步 `package-lock.json` 根版本。
+- `unzip -p output/superalink-esim-extension.zip manifest.json` 已确认 zip 内 manifest 版本为 `1.0.0 LEE000000 release`。
+
+已知坑位：
+
+- 本机当前没有 `gh` 命令，也没有检测到 `GITHUB_TOKEN` / `GH_TOKEN`。如果无法通过 API 创建 GitHub Release，至少需要先推送 commit 和 `v1.0.0` tag，再补充 GitHub Release 创建步骤。
